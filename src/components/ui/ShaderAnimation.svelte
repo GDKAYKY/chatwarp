@@ -1,8 +1,10 @@
 <script>
   import { onMount } from "svelte";
   import * as THREE from "three";
+  import FluidDynamics from "./fluid-dynamics.svelte";
 
   let container;
+  let fluidCanvas = null;
   let sceneRef = null;
 
   onMount(() => {
@@ -23,9 +25,17 @@
       precision highp float;
       uniform vec2 resolution;
       uniform float time;
+      uniform sampler2D distortionMap;
 
       void main(void) {
         vec2 uv = (gl_FragCoord.xy * 2.0 - resolution.xy) / min(resolution.x, resolution.y);
+        vec2 texUv = gl_FragCoord.xy / resolution.xy;
+        vec4 fluid = texture2D(distortionMap, vec2(texUv.x, 1.0 - texUv.y));
+        
+        float dist = fluid.r;
+        vec2 dir = normalize(uv + 0.0001);
+        uv -= dir * dist * 0.4; // Black hole distortion pulls the UVs
+
         float t = time*0.05;
         float lineWidth = 0.002;
 
@@ -36,8 +46,10 @@
           }
         }
         
-        float intensity = (color[0] + color[1] + color[2]) / 3.0;
-        gl_FragColor = vec4(color[0],color[1],color[2],1.0);
+        // Dim the light near the event horizon
+        color *= (1.0 - dist * 0.8);
+        
+        gl_FragColor = vec4(color, 1.0);
       }
     `;
 
@@ -50,6 +62,7 @@
     const uniforms = {
       time: { type: "f", value: 1.0 },
       resolution: { type: "v2", value: new THREE.Vector2() },
+      distortionMap: { type: "t", value: null },
     };
 
     const material = new THREE.ShaderMaterial({
@@ -80,6 +93,17 @@
     const animate = () => {
       const animationId = requestAnimationFrame(animate);
       uniforms.time.value += 0.05;
+
+      if (fluidCanvas && !uniforms.distortionMap.value) {
+        const texture = new THREE.CanvasTexture(fluidCanvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        uniforms.distortionMap.value = texture;
+      }
+      if (uniforms.distortionMap.value) {
+        uniforms.distortionMap.value.needsUpdate = true;
+      }
+
       renderer.render(scene, camera);
 
       if (sceneRef) {
@@ -115,8 +139,14 @@
   });
 </script>
 
-<div
-  bind:this={container}
-  class="w-full h-screen"
-  style="background: #000; overflow: hidden;"
-></div>
+<div class="relative w-full h-screen overflow-hidden">
+  <div
+    bind:this={container}
+    class="absolute inset-0 w-full h-full"
+    style="background: #000; overflow: hidden;"
+  ></div>
+  <FluidDynamics
+    bind:canvasRef={fluidCanvas}
+    class="absolute inset-0 w-full h-full opacity-0 pointer-events-auto"
+  />
+</div>
